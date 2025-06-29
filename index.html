@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Distributed System Monitor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #1a1a1a;
+            color: #00ff00;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        .monitor-container {
+            display: grid;
+            grid-template-areas: 
+                "resources resources resources"
+                "map map minimap"
+                "build research controls";
+            grid-template-columns: 1fr 1fr 300px;
+            grid-template-rows: 50px 1fr 200px;
+            height: 100vh;
+            gap: 2px;
+            background: #333;
+        }
+
+        .resource-panel {
+            grid-area: resources;
+            background: #2a2a2a;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            border-bottom: 2px solid #444;
+        }
+
+        .resource-item {
+            margin-right: 30px;
+            cursor: pointer;
+            padding: 5px 10px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .resource-item:hover {
+            background: #444;
+        }
+
+        .main-map {
+            grid-area: map;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 50%, #0a0a0a 100%);
+            position: relative;
+            border: 2px solid #444;
+            overflow: hidden;
+            cursor: grab;
+        }
+        
+        .main-map.dragging {
+            cursor: grabbing;
+        }
+
+        .minimap {
+            grid-area: minimap;
+            background: #1a1a1a;
+            border: 2px solid #444;
+            position: relative;
+        }
+
+        .build-menu {
+            grid-area: build;
+            background: #2a2a2a;
+            border: 2px solid #444;
+            padding: 10px;
+            overflow-y: auto;
+        }
+
+        .research-menu {
+            grid-area: research;
+            background: #2a2a2a;
+            border: 2px solid #444;
+            padding: 10px;
+            overflow-y: auto;
+        }
+
+        .controls {
+            grid-area: controls;
+            background: #2a2a2a;
+            border: 2px solid #444;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .menu-title {
+            color: #00ccff;
+            font-weight: bold;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            font-size: 14px;
+        }
+
+        .menu-button, .control-button {
+            background: #1a1a1a;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 14px;
+            text-transform: uppercase;
+            transition: all 0.2s;
+            margin-bottom: 5px;
+            display: block;
+            width: 100%;
+        }
+
+        .menu-button:hover, .control-button:hover {
+            background: #00ff00;
+            color: #1a1a1a;
+            box-shadow: 0 0 10px #00ff00;
+        }
+
+        .control-button {
+            background: #2a2a2a;
+            border: 2px solid #00ccff;
+            color: #00ccff;
+        }
+
+        .control-button:hover {
+            background: #00ccff;
+            color: #1a1a1a;
+            box-shadow: 0 0 10px #00ccff;
+        }
+
+        .status-display {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #0a0a0a;
+            color: #00ff00;
+            padding: 10px 20px;
+            border-top: 2px solid #444;
+            font-size: 14px;
+            z-index: 1000;
+        }
+
+        /* SVG Styles */
+        .map-svg, .minimap-svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Main map network styles */
+        .map-svg .terrain {
+            fill: url(#terrainGradient);
+            stroke: none;
+        }
+
+        .map-svg .server-island {
+            fill: url(#serverIslandGradient);
+            stroke: #00ff00;
+            stroke-width: 2;
+            cursor: pointer;
+        }
+
+        .map-svg .server-island:hover {
+            stroke: #00ff00;
+            stroke-width: 3;
+            filter: brightness(1.2);
+        }
+
+        .map-svg .process {
+            cursor: pointer;
+        }
+
+        .map-svg .process rect:hover {
+            filter: brightness(1.3);
+            stroke-width: 3;
+        }
+
+        .map-svg .traffic-flow circle {
+            filter: drop-shadow(0 0 3px #00ff00);
+        }
+
+        /* Minimap 2D styles (simpler, top-down) */
+        .minimap-svg .terrain {
+            fill: #2a4a2a;
+            stroke: #1a3a1a;
+            stroke-width: 1;
+        }
+
+        .minimap-svg .water {
+            fill: #003366;
+            stroke: #002244;
+            stroke-width: 1;
+        }
+
+        .minimap-svg .mountain {
+            fill: #4a4a4a;
+            stroke: #333;
+            stroke-width: 1;
+        }
+
+        .minimap-svg .building {
+            fill: #8a6a3a;
+            stroke: #6a4a2a;
+            stroke-width: 1;
+        }
+
+        .minimap-svg .unit {
+            fill: #ffff00;
+            stroke: #cccc00;
+            stroke-width: 1;
+        }
+
+        .minimap-svg .resource-node {
+            fill: #0066ff;
+            stroke: #0044cc;
+            stroke-width: 1;
+        }
+        
+        #viewport-rect {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="monitor-container">
+        <div class="resource-panel">
+            <div class="resource-item" onclick="handleResourceClick('cpu')">
+                💻 CPU: 47% avg
+            </div>
+            <div class="resource-item" onclick="handleResourceClick('memory')">
+                🧠 Memory: 12.3/32 GB
+            </div>
+            <div class="resource-item" onclick="handleResourceClick('network')">
+                🌐 Network: 1.2 Gbps
+            </div>
+            <div class="resource-item" onclick="handleResourceClick('gpu')">
+                🎮 GPU: 4/8 active
+            </div>
+            <div class="resource-item" onclick="handleResourceClick('servers')">
+                🖥️ Servers: 12/15 online
+            </div>
+        </div>
+
+        <div class="main-map" id="main-map">
+            <svg class="map-svg" id="map-svg" viewBox="0 0 800 600">
+                <defs>
+                    <!-- Gradients for 3D effect -->
+                    <linearGradient id="terrainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#0a0a0a"/>
+                        <stop offset="50%" stop-color="#1a1a1a"/>
+                        <stop offset="100%" stop-color="#0a0a0a"/>
+                    </linearGradient>
+                    <radialGradient id="serverIslandGradient" cx="50%" cy="30%" r="70%">
+                        <stop offset="0%" stop-color="#2a4a2a"/>
+                        <stop offset="50%" stop-color="#1a3a1a"/>
+                        <stop offset="100%" stop-color="#0a2a0a"/>
+                    </radialGradient>
+                    <linearGradient id="bridgeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#00ff00"/>
+                        <stop offset="50%" stop-color="#00cc00"/>
+                        <stop offset="100%" stop-color="#00ff00"/>
+                    </linearGradient>
+                    <linearGradient id="processGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#0088ff"/>
+                        <stop offset="50%" stop-color="#0066cc"/>
+                        <stop offset="100%" stop-color="#004499"/>
+                    </linearGradient>
+                    <radialGradient id="activeProcessGradient" cx="30%" cy="30%" r="70%">
+                        <stop offset="0%" stop-color="#00ff00"/>
+                        <stop offset="50%" stop-color="#00cc00"/>
+                        <stop offset="100%" stop-color="#009900"/>
+                    </radialGradient>
+                    <radialGradient id="routerGradient" cx="30%" cy="30%" r="70%">
+                        <stop offset="0%" stop-color="#ffaa00"/>
+                        <stop offset="50%" stop-color="#ff8800"/>
+                        <stop offset="100%" stop-color="#cc6600"/>
+                    </radialGradient>
+                </defs>
+                <g id="map-content">
+                    <!-- Background (network space) -->
+                    <rect class="terrain" x="0" y="0" width="2400" height="1800"/>
+                    
+                    <!-- Central Router Node -->
+                    <g id="central-router" transform="translate(1200,900)">
+                        <circle r="50" fill="url(#routerGradient)" stroke="#ff8800" stroke-width="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#000" font-size="14" font-weight="bold">ROUTER-1</text>
+                    </g>
+                    
+                    <!-- Network Bridges (connections) -->
+                    <!-- Top-left to center -->
+                    <line x1="400" y1="300" x2="1200" y2="900" stroke="url(#bridgeGradient)" stroke-width="4" opacity="0.8"/>
+                    <!-- Top-right to center -->
+                    <line x1="2000" y1="300" x2="1200" y2="900" stroke="url(#bridgeGradient)" stroke-width="4" opacity="0.8"/>
+                    <!-- Bottom-left to center -->
+                    <line x1="400" y1="1500" x2="1200" y2="900" stroke="url(#bridgeGradient)" stroke-width="4" opacity="0.8"/>
+                    <!-- Bottom-right to center -->
+                    <line x1="2000" y1="1500" x2="1200" y2="900" stroke="url(#bridgeGradient)" stroke-width="4" opacity="0.8"/>
+                    <!-- Mid-left to center -->
+                    <line x1="200" y1="900" x2="1200" y2="900" stroke="url(#bridgeGradient)" stroke-width="4" opacity="0.8"/>
+                    <!-- Mid-right to center -->
+                    <line x1="2200" y1="900" x2="1200" y2="900" stroke="url(#bridgeGradient)" stroke-width="4" opacity="0.8"/>
+                    
+                    <!-- Server Islands -->
+                    <!-- Top-left server island -->
+                    <g id="server-1" transform="translate(400,300)">
+                        <ellipse rx="150" ry="100" fill="url(#serverIslandGradient)" stroke="#00ff00" stroke-width="2"/>
+                        <text x="0" y="-70" text-anchor="middle" fill="#00ff00" font-size="12">SERVER-ALPHA</text>
+                    </g>
+                    
+                    <!-- Top-right server island -->
+                    <g id="server-2" transform="translate(2000,300)">
+                        <ellipse rx="150" ry="100" fill="url(#serverIslandGradient)" stroke="#00ff00" stroke-width="2"/>
+                        <text x="0" y="-70" text-anchor="middle" fill="#00ff00" font-size="12">SERVER-BETA</text>
+                    </g>
+                    
+                    <!-- Bottom-left server island -->
+                    <g id="server-3" transform="translate(400,1500)">
+                        <ellipse rx="150" ry="100" fill="url(#serverIslandGradient)" stroke="#00ff00" stroke-width="2"/>
+                        <text x="0" y="-70" text-anchor="middle" fill="#00ff00" font-size="12">SERVER-GAMMA</text>
+                    </g>
+                    
+                    <!-- Bottom-right server island -->
+                    <g id="server-4" transform="translate(2000,1500)">
+                        <ellipse rx="150" ry="100" fill="url(#serverIslandGradient)" stroke="#00ff00" stroke-width="2"/>
+                        <text x="0" y="-70" text-anchor="middle" fill="#00ff00" font-size="12">SERVER-DELTA</text>
+                    </g>
+                    
+                    <!-- Mid-left workstation -->
+                    <g id="workstation-1" transform="translate(200,900)">
+                        <ellipse rx="120" ry="80" fill="url(#serverIslandGradient)" stroke="#00ccff" stroke-width="2"/>
+                        <text x="0" y="-55" text-anchor="middle" fill="#00ccff" font-size="12">WORKSTATION-1</text>
+                    </g>
+                    
+                    <!-- Mid-right workstation -->
+                    <g id="workstation-2" transform="translate(2200,900)">
+                        <ellipse rx="120" ry="80" fill="url(#serverIslandGradient)" stroke="#00ccff" stroke-width="2"/>
+                        <text x="0" y="-55" text-anchor="middle" fill="#00ccff" font-size="12">WORKSTATION-2</text>
+                    </g>
+                    
+                    <!-- Processes on Server-Alpha -->
+                    <g class="process" transform="translate(350,280)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#processGradient)" stroke="#0066cc" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#fff" font-size="10">LLM-1</text>
+                    </g>
+                    <g class="process" transform="translate(420,270)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#activeProcessGradient)" stroke="#00cc00" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#000" font-size="10">MCP-1</text>
+                    </g>
+                    <g class="process" transform="translate(380,320)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#processGradient)" stroke="#0066cc" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#fff" font-size="10">LLM-2</text>
+                    </g>
+                    
+                    <!-- Processes on Server-Beta -->
+                    <g class="process" transform="translate(1950,280)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#activeProcessGradient)" stroke="#00cc00" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#000" font-size="10">LLM-3</text>
+                    </g>
+                    <g class="process" transform="translate(2020,270)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#processGradient)" stroke="#0066cc" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#fff" font-size="10">MCP-2</text>
+                    </g>
+                    <g class="process" transform="translate(1980,320)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#activeProcessGradient)" stroke="#00cc00" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#000" font-size="10">MCP-3</text>
+                    </g>
+                    <g class="process" transform="translate(2050,310)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#processGradient)" stroke="#0066cc" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#fff" font-size="10">LLM-4</text>
+                    </g>
+                    
+                    <!-- Processes on Server-Gamma -->
+                    <g class="process" transform="translate(380,1480)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#processGradient)" stroke="#0066cc" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#fff" font-size="10">MCP-4</text>
+                    </g>
+                    <g class="process" transform="translate(450,1490)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#activeProcessGradient)" stroke="#00cc00" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#000" font-size="10">LLM-5</text>
+                    </g>
+                    
+                    <!-- Processes on Server-Delta -->
+                    <g class="process" transform="translate(1980,1480)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#activeProcessGradient)" stroke="#00cc00" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#000" font-size="10">LLM-6</text>
+                    </g>
+                    <g class="process" transform="translate(2050,1490)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#processGradient)" stroke="#0066cc" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#fff" font-size="10">MCP-5</text>
+                    </g>
+                    <g class="process" transform="translate(2000,1530)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#processGradient)" stroke="#0066cc" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#fff" font-size="10">LLM-7</text>
+                    </g>
+                    
+                    <!-- Processes on Workstation-1 -->
+                    <g class="process" transform="translate(180,900)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#activeProcessGradient)" stroke="#00cc00" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#000" font-size="10">MCP-6</text>
+                    </g>
+                    <g class="process" transform="translate(240,890)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#processGradient)" stroke="#0066cc" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#fff" font-size="10">LLM-8</text>
+                    </g>
+                    
+                    <!-- Processes on Workstation-2 -->
+                    <g class="process" transform="translate(2180,900)">
+                        <rect x="-20" y="-15" width="40" height="30" fill="url(#processGradient)" stroke="#0066cc" stroke-width="2" rx="3"/>
+                        <text x="0" y="5" text-anchor="middle" fill="#fff" font-size="10">MCP-7</text>
+                    </g>
+                    
+                    <!-- Network Traffic Indicators -->
+                    <g class="traffic-flow">
+                        <!-- Animated circles representing data packets -->
+                        <circle r="3" fill="#00ff00" opacity="0.8">
+                            <animateMotion dur="3s" repeatCount="indefinite">
+                                <mpath href="#path-alpha-center"/>
+                            </animateMotion>
+                        </circle>
+                        <circle r="3" fill="#00ff00" opacity="0.8">
+                            <animateMotion dur="3s" repeatCount="indefinite" begin="1s">
+                                <mpath href="#path-beta-center"/>
+                            </animateMotion>
+                        </circle>
+                        <circle r="3" fill="#00ff00" opacity="0.8">
+                            <animateMotion dur="3s" repeatCount="indefinite" begin="2s">
+                                <mpath href="#path-gamma-center"/>
+                            </animateMotion>
+                        </circle>
+                    </g>
+                    
+                    <!-- Define paths for traffic animation -->
+                    <defs>
+                        <path id="path-alpha-center" d="M 400,300 L 1200,900"/>
+                        <path id="path-beta-center" d="M 2000,300 L 1200,900"/>
+                        <path id="path-gamma-center" d="M 400,1500 L 1200,900"/>
+                    </defs>
+                </g>
+            </svg>
+        </div>
+
+        <div class="minimap">
+            <div class="menu-title">NETWORK OVERVIEW</div>
+            <svg class="minimap-svg" viewBox="0 0 200 150">
+                <!-- Background -->
+                <rect class="terrain" x="0" y="0" width="200" height="150" fill="#0a0a0a"/>
+                
+                <!-- Central Router (scaled) -->
+                <circle cx="100" cy="75" r="5" fill="#ff8800" stroke="#ffaa00" stroke-width="1"/>
+                
+                <!-- Network connections (scaled) -->
+                <line x1="33" y1="25" x2="100" y2="75" stroke="#00ff00" stroke-width="1" opacity="0.6"/>
+                <line x1="167" y1="25" x2="100" y2="75" stroke="#00ff00" stroke-width="1" opacity="0.6"/>
+                <line x1="33" y1="125" x2="100" y2="75" stroke="#00ff00" stroke-width="1" opacity="0.6"/>
+                <line x1="167" y1="125" x2="100" y2="75" stroke="#00ff00" stroke-width="1" opacity="0.6"/>
+                <line x1="17" y1="75" x2="100" y2="75" stroke="#00ff00" stroke-width="1" opacity="0.6"/>
+                <line x1="183" y1="75" x2="100" y2="75" stroke="#00ff00" stroke-width="1" opacity="0.6"/>
+                
+                <!-- Server islands (scaled) -->
+                <ellipse cx="33" cy="25" rx="12" ry="8" fill="#1a3a1a" stroke="#00ff00" stroke-width="1"/>
+                <text x="33" y="27" text-anchor="middle" fill="#00ff00" font-size="6">ALPHA</text>
+                
+                <ellipse cx="167" cy="25" rx="12" ry="8" fill="#1a3a1a" stroke="#00ff00" stroke-width="1"/>
+                <text x="167" y="27" text-anchor="middle" fill="#00ff00" font-size="6">BETA</text>
+                
+                <ellipse cx="33" cy="125" rx="12" ry="8" fill="#1a3a1a" stroke="#00ff00" stroke-width="1"/>
+                <text x="33" y="127" text-anchor="middle" fill="#00ff00" font-size="6">GAMMA</text>
+                
+                <ellipse cx="167" cy="125" rx="12" ry="8" fill="#1a3a1a" stroke="#00ff00" stroke-width="1"/>
+                <text x="167" y="127" text-anchor="middle" fill="#00ff00" font-size="6">DELTA</text>
+                
+                <ellipse cx="17" cy="75" rx="10" ry="6" fill="#1a3a1a" stroke="#00ccff" stroke-width="1"/>
+                <text x="17" y="77" text-anchor="middle" fill="#00ccff" font-size="6">WS-1</text>
+                
+                <ellipse cx="183" cy="75" rx="10" ry="6" fill="#1a3a1a" stroke="#00ccff" stroke-width="1"/>
+                <text x="183" y="77" text-anchor="middle" fill="#00ccff" font-size="6">WS-2</text>
+                
+                <!-- Process indicators -->
+                <rect x="28" y="20" width="2" height="2" fill="#0088ff"/>
+                <rect x="32" y="20" width="2" height="2" fill="#00ff00"/>
+                <rect x="36" y="20" width="2" height="2" fill="#0088ff"/>
+                
+                <rect x="162" y="20" width="2" height="2" fill="#00ff00"/>
+                <rect x="166" y="20" width="2" height="2" fill="#0088ff"/>
+                <rect x="170" y="20" width="2" height="2" fill="#00ff00"/>
+                
+                <rect x="30" y="122" width="2" height="2" fill="#0088ff"/>
+                <rect x="34" y="122" width="2" height="2" fill="#00ff00"/>
+                
+                <rect x="164" y="122" width="2" height="2" fill="#00ff00"/>
+                <rect x="168" y="122" width="2" height="2" fill="#0088ff"/>
+                
+                <rect x="14" y="73" width="2" height="2" fill="#00ff00"/>
+                <rect x="18" y="73" width="2" height="2" fill="#0088ff"/>
+                
+                <rect x="180" y="73" width="2" height="2" fill="#0088ff"/>
+                
+                <!-- View rectangle -->
+                <rect id="viewport-rect" x="66" y="50" width="67" height="50" fill="none" stroke="#ffff00" stroke-width="2" opacity="0.8"/>
+            </svg>
+        </div>
+
+        <div class="build-menu">
+            <div class="menu-title">SERVER MANAGEMENT</div>
+            <button class="menu-button" onclick="handleBuildButton('deploy_llm')">Deploy LLM</button>
+            <button class="menu-button" onclick="handleBuildButton('deploy_mcp')">Deploy MCP Server</button>
+            <button class="menu-button" onclick="handleBuildButton('start_service')">Start Service</button>
+            <button class="menu-button" onclick="handleBuildButton('stop_service')">Stop Service</button>
+            <button class="menu-button" onclick="handleBuildButton('restart_service')">Restart Service</button>
+            <button class="menu-button" onclick="handleBuildButton('scale_up')">Scale Up</button>
+            <button class="menu-button" onclick="handleBuildButton('scale_down')">Scale Down</button>
+            <button class="menu-button" onclick="handleBuildButton('health_check')">Health Check</button>
+        </div>
+
+        <div class="research-menu">
+            <div class="menu-title">MCP CONFIGURATION</div>
+            <button class="menu-button" onclick="handleResearchButton('discover')">Discover Servers</button>
+            <button class="menu-button" onclick="handleResearchButton('configure')">Configure Protocol</button>
+            <button class="menu-button" onclick="handleResearchButton('security')">Security Settings</button>
+            <button class="menu-button" onclick="handleResearchButton('routing')">Routing Rules</button>
+            <button class="menu-button" onclick="handleResearchButton('loadbalance')">Load Balancing</button>
+            <button class="menu-button" onclick="handleResearchButton('failover')">Failover Setup</button>
+            <button class="menu-button" onclick="handleResearchButton('monitor')">Monitor Traffic</button>
+        </div>
+
+        <div class="controls">
+            <div class="menu-title">ALERT CONSOLE</div>
+            <button class="control-button" onclick="handleUnitCommand('view_alerts')">VIEW ALERTS</button>
+            <button class="control-button" onclick="handleUnitCommand('clear_alerts')">CLEAR ALERTS</button>
+            <button class="control-button" onclick="handleUnitCommand('set_threshold')">SET THRESHOLDS</button>
+            <button class="control-button" onclick="handleUnitCommand('export_logs')">EXPORT LOGS</button>
+        </div>
+    </div>
+
+    <div class="status-display" id="status">
+        Distributed System Monitor - Click on servers or processes to view details
+    </div>
+
+    <script type="module">
+        import init, { 
+            handle_map_click, 
+            handle_minimap_click, 
+            handle_build_button, 
+            handle_research_button, 
+            handle_unit_command,
+            handle_resource_click,
+            log_status 
+        } from './pkg/rts_monitor.js';
+
+        // Map state management in JavaScript
+        const mapState = {
+            mapWidth: 2400,
+            mapHeight: 1800,
+            viewportWidth: 800,
+            viewportHeight: 600,
+            viewportX: 800, // Start centered
+            viewportY: 600
+        };
+
+        let isDragging = false;
+        let dragStart = { x: 0, y: 0 };
+        let viewportStart = { x: 0, y: 0 };
+        let scrollInterval = null;
+        let currentMousePos = { x: 0, y: 0 };
+
+        function updateMapView() {
+            const mapContent = document.getElementById('map-content');
+            if (mapContent) {
+                // Apply isometric transformation first, then viewport translation
+                const viewportTransform = `translate(${-mapState.viewportX}, ${-mapState.viewportY})`;
+                // Reduced rotation for better minimap alignment: less skew, more similar to top-down
+                const isoTransform = 'matrix(1, 0.15, -0.3, 0.9, 200, 50)';
+                mapContent.setAttribute('transform', `${viewportTransform} ${isoTransform}`);
+            }
+            updateMinimapViewport();
+        }
+
+        function updateMinimapViewport() {
+            const viewportRect = document.getElementById('viewport-rect');
+            if (viewportRect) {
+                const scaleX = 200 / mapState.mapWidth;
+                const scaleY = 150 / mapState.mapHeight;
+                
+                viewportRect.setAttribute('x', mapState.viewportX * scaleX);
+                viewportRect.setAttribute('y', mapState.viewportY * scaleY);
+                viewportRect.setAttribute('width', mapState.viewportWidth * scaleX);
+                viewportRect.setAttribute('height', mapState.viewportHeight * scaleY);
+            }
+        }
+
+        function clampViewport() {
+            mapState.viewportX = Math.max(0, Math.min(mapState.viewportX, mapState.mapWidth - mapState.viewportWidth));
+            mapState.viewportY = Math.max(0, Math.min(mapState.viewportY, mapState.mapHeight - mapState.viewportHeight));
+        }
+
+        function handleEdgeScroll() {
+            const mapDiv = document.getElementById('main-map');
+            const rect = mapDiv.getBoundingClientRect();
+            const edgeThreshold = 50;
+            const scrollSpeed = 20;
+            
+            let dx = 0;
+            let dy = 0;
+            
+            if (currentMousePos.x < edgeThreshold) dx = -scrollSpeed;
+            else if (currentMousePos.x > rect.width - edgeThreshold) dx = scrollSpeed;
+            
+            if (currentMousePos.y < edgeThreshold) dy = -scrollSpeed;
+            else if (currentMousePos.y > rect.height - edgeThreshold) dy = scrollSpeed;
+            
+            if (dx !== 0 || dy !== 0) {
+                mapState.viewportX += dx;
+                mapState.viewportY += dy;
+                clampViewport();
+                updateMapView();
+            }
+        }
+
+        async function run() {
+            await init();
+            
+            // Override console.log to show status in UI
+            const originalLog = console.log;
+            console.log = function(message) {
+                originalLog(message);
+                const statusEl = document.getElementById('status');
+                if (statusEl && typeof message === 'string' && message.includes('System Monitor:')) {
+                    statusEl.textContent = message.replace('System Monitor: ', '');
+                }
+            };
+
+            // Initialize map view
+            updateMapView();
+            log_status("Distributed System Monitor initialized - Network topology loaded");
+
+            // Map interactions
+            const mapSvg = document.getElementById('map-svg');
+            const mapDiv = document.getElementById('main-map');
+            
+            // Map click handler with isometric coordinate conversion
+            mapSvg.addEventListener('click', function(event) {
+                if (!isDragging) {
+                    const rect = mapSvg.getBoundingClientRect();
+                    const screenX = event.clientX - rect.left;
+                    const screenY = event.clientY - rect.top;
+                    
+                    // Convert screen coordinates to SVG coordinates
+                    const svgX = (screenX / rect.width) * 800;
+                    const svgY = (screenY / rect.height) * 600;
+                    
+                    // Reverse the isometric transformation matrix
+                    // matrix(0.866, 0.5, -0.866, 0.5, 400, 100)
+                    const adjustedX = svgX - 400;
+                    const adjustedY = svgY - 100;
+                    
+                    // Apply inverse matrix transformation
+                    const det = 0.866 * 0.5 - 0.5 * (-0.866); // determinant
+                    const worldX = ((0.5 * adjustedX) - (-0.866 * adjustedY)) / det + mapState.viewportX;
+                    const worldY = ((-0.5 * adjustedX) + (0.866 * adjustedY)) / det + mapState.viewportY;
+                    
+                    handle_map_click(worldX, worldY);
+                }
+            });
+
+            // Mouse down for drag
+            mapDiv.addEventListener('mousedown', function(event) {
+                if (event.button === 0) { // Left mouse button
+                    isDragging = true;
+                    dragStart.x = event.clientX;
+                    dragStart.y = event.clientY;
+                    viewportStart.x = mapState.viewportX;
+                    viewportStart.y = mapState.viewportY;
+                    mapDiv.classList.add('dragging');
+                    event.preventDefault();
+                }
+            });
+
+            // Mouse move for drag and edge scroll with isometric adjustments
+            document.addEventListener('mousemove', function(event) {
+                const rect = mapDiv.getBoundingClientRect();
+                const isOverMap = event.clientX >= rect.left && event.clientX <= rect.right &&
+                                 event.clientY >= rect.top && event.clientY <= rect.bottom;
+                
+                if (isOverMap) {
+                    currentMousePos.x = event.clientX - rect.left;
+                    currentMousePos.y = event.clientY - rect.top;
+                    
+                    if (isDragging && event.buttons === 1) {
+                        // Direct 1:1 movement without scaling compensation
+                        const screenDx = dragStart.x - event.clientX;
+                        const screenDy = dragStart.y - event.clientY;
+                        
+                        mapState.viewportX = viewportStart.x + screenDx;
+                        mapState.viewportY = viewportStart.y + screenDy;
+                        clampViewport();
+                        updateMapView();
+                    } else if (!isDragging && !scrollInterval) {
+                        scrollInterval = setInterval(handleEdgeScroll, 16);
+                    }
+                } else if (scrollInterval) {
+                    clearInterval(scrollInterval);
+                    scrollInterval = null;
+                }
+            });
+
+            // Mouse up to stop drag
+            document.addEventListener('mouseup', function(event) {
+                if (event.button === 0) {
+                    isDragging = false;
+                    mapDiv.classList.remove('dragging');
+                }
+            });
+
+            // Minimap click handler
+            const minimapSvg = document.querySelector('.minimap-svg');
+            minimapSvg.addEventListener('click', function(event) {
+                const pt = minimapSvg.createSVGPoint();
+                pt.x = event.clientX;
+                pt.y = event.clientY;
+                const svgP = pt.matrixTransform(minimapSvg.getScreenCTM().inverse());
+                
+                // Convert minimap coordinates to world coordinates
+                const scaleX = mapState.mapWidth / 200;
+                const scaleY = mapState.mapHeight / 150;
+                
+                // Center viewport on clicked position
+                mapState.viewportX = (svgP.x * scaleX) - (mapState.viewportWidth / 2);
+                mapState.viewportY = (svgP.y * scaleY) - (mapState.viewportHeight / 2);
+                clampViewport();
+                updateMapView();
+                
+                handle_minimap_click(svgP.x, svgP.y);
+            });
+
+            // Keyboard controls with isometric adjustments
+            document.addEventListener('keydown', function(event) {
+                const step = 40;
+                let moved = false;
+                
+                switch(event.key) {
+                    case 'ArrowUp':
+                    case 'w':
+                    case 'W':
+                        mapState.viewportY -= step;
+                        moved = true;
+                        break;
+                    case 'ArrowDown':
+                    case 's':
+                    case 'S':
+                        mapState.viewportY += step;
+                        moved = true;
+                        break;
+                    case 'ArrowLeft':
+                    case 'a':
+                    case 'A':
+                        mapState.viewportX -= step;
+                        moved = true;
+                        break;
+                    case 'ArrowRight':
+                    case 'd':
+                    case 'D':
+                        mapState.viewportX += step;
+                        moved = true;
+                        break;
+                }
+                
+                if (moved) {
+                    event.preventDefault();
+                    clampViewport();
+                    updateMapView();
+                    log_status(`Viewport moved to (${Math.round(mapState.viewportX)}, ${Math.round(mapState.viewportY)})`);
+                }
+            });
+
+            // Make WASM functions globally available
+            window.handleBuildButton = handle_build_button;
+            window.handleResearchButton = handle_research_button;
+            window.handleUnitCommand = handle_unit_command;
+            window.handleResourceClick = handle_resource_click;
+        }
+
+        run();
+    </script>
+</body>
+</html>
