@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use web_sys::console;
+use web_sys::{console, window, Document, Element, HtmlElement, MouseEvent};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -89,6 +89,173 @@ pub fn minimap_to_world(minimap_x: f64, minimap_y: f64) -> (f64, f64) {
         let scale_y = state.map_height / 150.0;
         (minimap_x * scale_x, minimap_y * scale_y)
     })
+}
+
+// DOM manipulation functions
+fn get_document() -> Result<Document, JsValue> {
+    window()
+        .ok_or_else(|| JsValue::from_str("No window found"))?
+        .document()
+        .ok_or_else(|| JsValue::from_str("No document found"))
+}
+
+fn get_element_by_id(id: &str) -> Result<Element, JsValue> {
+    get_document()?
+        .get_element_by_id(id)
+        .ok_or_else(|| JsValue::from_str(&format!("Element '{}' not found", id)))
+}
+
+fn update_map_transform() -> Result<(), JsValue> {
+    MAP_STATE.with(|state| {
+        let state = state.borrow();
+        let map_content = get_element_by_id("map-content")?;
+
+        let viewport_transform = format!(
+            "translate({}, {})",
+            -state.viewport_x,
+            -state.viewport_y
+        );
+        let iso_transform = "matrix(1, 0.15, -0.3, 0.9, 200, 50)";
+        let transform = format!("{} {}", viewport_transform, iso_transform);
+
+        map_content.set_attribute("transform", &transform)?;
+        update_minimap_viewport()?;
+        Ok(())
+    })
+}
+
+fn update_minimap_viewport() -> Result<(), JsValue> {
+    MAP_STATE.with(|state| {
+        let state = state.borrow();
+        let viewport_rect = get_element_by_id("viewport-rect")?;
+
+        let scale_x = 200.0 / state.map_width;
+        let scale_y = 150.0 / state.map_height;
+
+        viewport_rect.set_attribute("x", &(state.viewport_x * scale_x).to_string())?;
+        viewport_rect.set_attribute("y", &(state.viewport_y * scale_y).to_string())?;
+        viewport_rect.set_attribute("width", &(state.viewport_width * scale_x).to_string())?;
+        viewport_rect.set_attribute("height", &(state.viewport_height * scale_y).to_string())?;
+
+        Ok(())
+    })
+}
+
+// Mouse drag state
+thread_local! {
+    static DRAG_STATE: RefCell<Option<DragState>> = const { RefCell::new(None) };
+}
+
+struct DragState {
+    start_x: f64,
+    start_y: f64,
+    viewport_start_x: f64,
+    viewport_start_y: f64,
+}
+
+// Mouse event handlers
+#[wasm_bindgen]
+pub fn handle_map_mousedown(event: MouseEvent) -> Result<(), JsValue> {
+    if event.button() == 0 {
+        let (viewport_x, viewport_y) = MAP_STATE.with(|state| {
+            let state = state.borrow();
+            (state.viewport_x, state.viewport_y)
+        });
+
+        DRAG_STATE.with(|drag| {
+            *drag.borrow_mut() = Some(DragState {
+                start_x: event.client_x() as f64,
+                start_y: event.client_y() as f64,
+                viewport_start_x: viewport_x,
+                viewport_start_y: viewport_y,
+            });
+        });
+
+        event.prevent_default();
+
+        if let Ok(map_div) = get_element_by_id("main-map") {
+            if let Some(html_element) = map_div.dyn_ref::<HtmlElement>() {
+                let _ = html_element.class_list().add_1("dragging");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[wasm_bindgen]
+pub fn handle_map_mousemove(event: MouseEvent) -> Result<(), JsValue> {
+    DRAG_STATE.with(|drag| {
+        if let Some(ref drag_state) = *drag.borrow() {
+            if event.buttons() == 1 {
+                let dx = drag_state.start_x - event.client_x() as f64;
+                let dy = drag_state.start_y - event.client_y() as f64;
+
+                MAP_STATE.with(|state| {
+                    let mut state = state.borrow_mut();
+                    state.viewport_x = drag_state.viewport_start_x + dx;
+                    state.viewport_y = drag_state.viewport_start_y + dy;
+                    state.clamp_viewport();
+                });
+
+                let _ = update_map_transform();
+            }
+        }
+    });
+    Ok(())
+}
+
+#[wasm_bindgen]
+pub fn handle_map_mouseup(event: MouseEvent) -> Result<(), JsValue> {
+    if event.button() == 0 {
+        DRAG_STATE.with(|drag| {
+            *drag.borrow_mut() = None;
+        });
+
+        if let Ok(map_div) = get_element_by_id("main-map") {
+            if let Some(html_element) = map_div.dyn_ref::<HtmlElement>() {
+                let _ = html_element.class_list().remove_1("dragging");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[wasm_bindgen]
+pub fn handle_minimap_click_new(event: MouseEvent) -> Result<(), JsValue> {
+    let target = event
+        .target()
+        .ok_or_else(|| JsValue::from_str("No event target"))?;
+    let element = target
+        .dyn_ref::<Element>()
+        .ok_or_else(|| JsValue::from_str("Target is not an Element"))?;
+
+    let rect = element.get_bounding_client_rect();
+    let x = event.client_x() as f64 - rect.left();
+    let y = event.client_y() as f64 - rect.top();
+
+    // Convert to minimap coordinates (viewBox is 0 0 200 150)
+    let minimap_x = (x / rect.width()) * 200.0;
+    let minimap_y = (y / rect.height()) * 150.0;
+
+    let (world_x, world_y) = minimap_to_world(minimap_x, minimap_y);
+
+    MAP_STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        state.set_viewport_center(world_x, world_y);
+    });
+
+    update_map_transform()?;
+    handle_minimap_click(minimap_x, minimap_y);
+
+    Ok(())
+}
+
+// Initialize map view
+#[wasm_bindgen]
+pub fn init_map_view() -> Result<(), JsValue> {
+    update_map_transform()?;
+    log_status("Distributed System Monitor initialized - Network topology loaded");
+    Ok(())
 }
 
 // Helper function to format status messages

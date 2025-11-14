@@ -27,6 +27,7 @@ features = [
   "DomRect",
   "CssStyleDeclaration",
   "HtmlCollection",
+  "DomTokenList",
 ]
 
 [dev-dependencies]
