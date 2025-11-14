@@ -21,6 +21,12 @@ features = [
   "EventTarget",
   "Event",
   "MouseEvent",
+  "KeyboardEvent",
+  "SvgElement",
+  "SvgGraphicsElement",
+  "DomRect",
+  "CssStyleDeclaration",
+  "HtmlCollection",
 ]
 
 [dev-dependencies]
