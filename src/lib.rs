@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use web_sys::{console, window, Document, Element, HtmlElement, MouseEvent};
+use web_sys::{console, window, Document, Element, HtmlElement, MouseEvent, KeyboardEvent};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -255,6 +255,53 @@ pub fn handle_minimap_click_new(event: MouseEvent) -> Result<(), JsValue> {
 pub fn init_map_view() -> Result<(), JsValue> {
     update_map_transform()?;
     log_status("Distributed System Monitor initialized - Network topology loaded");
+    Ok(())
+}
+
+// Keyboard event handler
+#[wasm_bindgen]
+pub fn handle_keydown(event: KeyboardEvent) -> Result<(), JsValue> {
+    let step = 40.0;
+    let key = event.key();
+    let mut moved = false;
+
+    MAP_STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        match key.as_str() {
+            "ArrowUp" | "w" | "W" => {
+                state.move_viewport(0.0, -step);
+                moved = true;
+            }
+            "ArrowDown" | "s" | "S" => {
+                state.move_viewport(0.0, step);
+                moved = true;
+            }
+            "ArrowLeft" | "a" | "A" => {
+                state.move_viewport(-step, 0.0);
+                moved = true;
+            }
+            "ArrowRight" | "d" | "D" => {
+                state.move_viewport(step, 0.0);
+                moved = true;
+            }
+            _ => {}
+        }
+    });
+
+    if moved {
+        event.prevent_default();
+        update_map_transform()?;
+
+        MAP_STATE.with(|state| {
+            let state = state.borrow();
+            log_status(&format!(
+                "Viewport moved to ({}, {})",
+                state.viewport_x.round(),
+                state.viewport_y.round()
+            ));
+        });
+    }
+
     Ok(())
 }
 
