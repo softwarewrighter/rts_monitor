@@ -21,13 +21,13 @@
 
         .monitor-container {
             display: grid;
-            grid-template-areas: 
+            grid-template-areas:
                 "resources resources resources"
                 "map map minimap"
                 "build research controls";
             grid-template-columns: 1fr 1fr 300px;
             grid-template-rows: 50px 1fr 200px;
-            height: 100vh;
+            height: calc(100vh - 44px);
             gap: 2px;
             background: #333;
         }
@@ -544,8 +544,8 @@
         </div>
     </div>
 
-    <div class="status-display" id="status">
-        Distributed System Monitor - Click on servers or processes to view details
+    <div class="status-display">
+        <span id="status">Distributed System Monitor - Click on servers or processes to view details</span>
         <span style="float: right; font-size: 12px;">
             Copyright (c) 2025 Michael A Wright |
             <a href="LICENSE" style="color: #00ff00; text-decoration: none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">LICENSE</a> |

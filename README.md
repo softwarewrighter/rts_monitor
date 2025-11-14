@@ -2,6 +2,8 @@
 
 A web-based Distributed System Monitor built with Rust and WebAssembly. This project provides a visual interface for managing distributed LLMs and Model Context Protocol (MCP) servers across a network, with interactive monitoring and management capabilities.
 
+![Distributed System Monitor Screenshot](docs/images/screenshot.png)
+
 ## Features
 
 ### Monitor Interface
@@ -17,6 +19,7 @@ A web-based Distributed System Monitor built with Rust and WebAssembly. This pro
 - SVG-based graphics for scalable map elements
 - Responsive grid layout optimizing screen real estate
 - Hover effects and visual feedback for all interactive elements
+- Footer with copyright notice and links to LICENSE and GitHub repository
 
 ### Technical Stack
 - **Rust**: Core logic and WASM bindings using `wasm-bindgen`
@@ -74,16 +77,21 @@ All interactions are logged to both the browser console and the on-screen status
 
 ```
 rts_monitor/
-├── src/
-│   └── lib.rs          # Main WASM module with interaction handlers
-├── scripts/
-│   ├── build.sh        # Build automation script
-│   └── run.sh          # Development server script
-├── pkg/                # Generated WASM output (after build)
-├── index.html          # Main web interface
-├── Cargo.toml          # Rust project configuration
-├── CLAUDE.md           # Project guidance for Claude Code
-└── README.md           # This file
++-- src/
+|   +-- lib.rs          # Main WASM module with interaction handlers
++-- scripts/
+|   +-- build.sh        # Build automation script
+|   +-- run.sh          # Development server script
++-- docs/
+|   +-- images/
+|   |   +-- screenshot.png
+|   +-- overview.md     # Project overview for management
++-- pkg/                # Generated WASM output (after build)
++-- index.html          # Main web interface
++-- Cargo.toml          # Rust project configuration
++-- CLAUDE.md           # Project guidance for Claude Code
++-- LICENSE             # MIT License
++-- README.md           # This file
 ```
 
 ## Development
@@ -109,6 +117,8 @@ The application uses a clean separation between Rust (logic) and JavaScript (DOM
 - **JavaScript**: Minimal glue code for WASM initialization and event forwarding
 
 ## License
+
+Copyright (c) 2025 Michael A Wright
 
 This project is released under the MIT License. See LICENSE file for details.
 
