@@ -554,88 +554,22 @@
     </div>
 
     <script type="module">
-        import init, { 
-            handle_map_click, 
-            handle_minimap_click, 
-            handle_build_button, 
-            handle_research_button, 
+        import init, {
+            handle_build_button,
+            handle_research_button,
             handle_unit_command,
             handle_resource_click,
-            log_status 
+            init_map_view,
+            handle_map_mousedown,
+            handle_map_mousemove,
+            handle_map_mouseup,
+            handle_minimap_click_new,
+            handle_keydown
         } from './pkg/rts_monitor.js';
-
-        // Map state management in JavaScript
-        const mapState = {
-            mapWidth: 2400,
-            mapHeight: 1800,
-            viewportWidth: 800,
-            viewportHeight: 600,
-            viewportX: 800, // Start centered
-            viewportY: 600
-        };
-
-        let isDragging = false;
-        let dragStart = { x: 0, y: 0 };
-        let viewportStart = { x: 0, y: 0 };
-        let scrollInterval = null;
-        let currentMousePos = { x: 0, y: 0 };
-
-        function updateMapView() {
-            const mapContent = document.getElementById('map-content');
-            if (mapContent) {
-                // Apply isometric transformation first, then viewport translation
-                const viewportTransform = `translate(${-mapState.viewportX}, ${-mapState.viewportY})`;
-                // Reduced rotation for better minimap alignment: less skew, more similar to top-down
-                const isoTransform = 'matrix(1, 0.15, -0.3, 0.9, 200, 50)';
-                mapContent.setAttribute('transform', `${viewportTransform} ${isoTransform}`);
-            }
-            updateMinimapViewport();
-        }
-
-        function updateMinimapViewport() {
-            const viewportRect = document.getElementById('viewport-rect');
-            if (viewportRect) {
-                const scaleX = 200 / mapState.mapWidth;
-                const scaleY = 150 / mapState.mapHeight;
-                
-                viewportRect.setAttribute('x', mapState.viewportX * scaleX);
-                viewportRect.setAttribute('y', mapState.viewportY * scaleY);
-                viewportRect.setAttribute('width', mapState.viewportWidth * scaleX);
-                viewportRect.setAttribute('height', mapState.viewportHeight * scaleY);
-            }
-        }
-
-        function clampViewport() {
-            mapState.viewportX = Math.max(0, Math.min(mapState.viewportX, mapState.mapWidth - mapState.viewportWidth));
-            mapState.viewportY = Math.max(0, Math.min(mapState.viewportY, mapState.mapHeight - mapState.viewportHeight));
-        }
-
-        function handleEdgeScroll() {
-            const mapDiv = document.getElementById('main-map');
-            const rect = mapDiv.getBoundingClientRect();
-            const edgeThreshold = 50;
-            const scrollSpeed = 20;
-            
-            let dx = 0;
-            let dy = 0;
-            
-            if (currentMousePos.x < edgeThreshold) dx = -scrollSpeed;
-            else if (currentMousePos.x > rect.width - edgeThreshold) dx = scrollSpeed;
-            
-            if (currentMousePos.y < edgeThreshold) dy = -scrollSpeed;
-            else if (currentMousePos.y > rect.height - edgeThreshold) dy = scrollSpeed;
-            
-            if (dx !== 0 || dy !== 0) {
-                mapState.viewportX += dx;
-                mapState.viewportY += dy;
-                clampViewport();
-                updateMapView();
-            }
-        }
 
         async function run() {
             await init();
-            
+
             // Override console.log to show status in UI
             const originalLog = console.log;
             console.log = function(message) {
@@ -646,150 +580,21 @@
                 }
             };
 
-            // Initialize map view
-            updateMapView();
-            log_status("Distributed System Monitor initialized - Network topology loaded");
+            // Initialize map view (Rust handles all viewport logic)
+            init_map_view();
 
-            // Map interactions
-            const mapSvg = document.getElementById('map-svg');
+            // Attach event listeners to call Rust handlers
             const mapDiv = document.getElementById('main-map');
-            
-            // Map click handler with isometric coordinate conversion
-            mapSvg.addEventListener('click', function(event) {
-                if (!isDragging) {
-                    const rect = mapSvg.getBoundingClientRect();
-                    const screenX = event.clientX - rect.left;
-                    const screenY = event.clientY - rect.top;
-                    
-                    // Convert screen coordinates to SVG coordinates
-                    const svgX = (screenX / rect.width) * 800;
-                    const svgY = (screenY / rect.height) * 600;
-                    
-                    // Reverse the isometric transformation matrix
-                    // matrix(0.866, 0.5, -0.866, 0.5, 400, 100)
-                    const adjustedX = svgX - 400;
-                    const adjustedY = svgY - 100;
-                    
-                    // Apply inverse matrix transformation
-                    const det = 0.866 * 0.5 - 0.5 * (-0.866); // determinant
-                    const worldX = ((0.5 * adjustedX) - (-0.866 * adjustedY)) / det + mapState.viewportX;
-                    const worldY = ((-0.5 * adjustedX) + (0.866 * adjustedY)) / det + mapState.viewportY;
-                    
-                    handle_map_click(worldX, worldY);
-                }
-            });
+            mapDiv.addEventListener('mousedown', handle_map_mousedown);
+            document.addEventListener('mousemove', handle_map_mousemove);
+            document.addEventListener('mouseup', handle_map_mouseup);
 
-            // Mouse down for drag
-            mapDiv.addEventListener('mousedown', function(event) {
-                if (event.button === 0) { // Left mouse button
-                    isDragging = true;
-                    dragStart.x = event.clientX;
-                    dragStart.y = event.clientY;
-                    viewportStart.x = mapState.viewportX;
-                    viewportStart.y = mapState.viewportY;
-                    mapDiv.classList.add('dragging');
-                    event.preventDefault();
-                }
-            });
-
-            // Mouse move for drag and edge scroll with isometric adjustments
-            document.addEventListener('mousemove', function(event) {
-                const rect = mapDiv.getBoundingClientRect();
-                const isOverMap = event.clientX >= rect.left && event.clientX <= rect.right &&
-                                 event.clientY >= rect.top && event.clientY <= rect.bottom;
-                
-                if (isOverMap) {
-                    currentMousePos.x = event.clientX - rect.left;
-                    currentMousePos.y = event.clientY - rect.top;
-                    
-                    if (isDragging && event.buttons === 1) {
-                        // Direct 1:1 movement without scaling compensation
-                        const screenDx = dragStart.x - event.clientX;
-                        const screenDy = dragStart.y - event.clientY;
-                        
-                        mapState.viewportX = viewportStart.x + screenDx;
-                        mapState.viewportY = viewportStart.y + screenDy;
-                        clampViewport();
-                        updateMapView();
-                    } else if (!isDragging && !scrollInterval) {
-                        scrollInterval = setInterval(handleEdgeScroll, 16);
-                    }
-                } else if (scrollInterval) {
-                    clearInterval(scrollInterval);
-                    scrollInterval = null;
-                }
-            });
-
-            // Mouse up to stop drag
-            document.addEventListener('mouseup', function(event) {
-                if (event.button === 0) {
-                    isDragging = false;
-                    mapDiv.classList.remove('dragging');
-                }
-            });
-
-            // Minimap click handler
             const minimapSvg = document.querySelector('.minimap-svg');
-            minimapSvg.addEventListener('click', function(event) {
-                const pt = minimapSvg.createSVGPoint();
-                pt.x = event.clientX;
-                pt.y = event.clientY;
-                const svgP = pt.matrixTransform(minimapSvg.getScreenCTM().inverse());
-                
-                // Convert minimap coordinates to world coordinates
-                const scaleX = mapState.mapWidth / 200;
-                const scaleY = mapState.mapHeight / 150;
-                
-                // Center viewport on clicked position
-                mapState.viewportX = (svgP.x * scaleX) - (mapState.viewportWidth / 2);
-                mapState.viewportY = (svgP.y * scaleY) - (mapState.viewportHeight / 2);
-                clampViewport();
-                updateMapView();
-                
-                handle_minimap_click(svgP.x, svgP.y);
-            });
+            minimapSvg.addEventListener('click', handle_minimap_click_new);
 
-            // Keyboard controls with isometric adjustments
-            document.addEventListener('keydown', function(event) {
-                const step = 40;
-                let moved = false;
-                
-                switch(event.key) {
-                    case 'ArrowUp':
-                    case 'w':
-                    case 'W':
-                        mapState.viewportY -= step;
-                        moved = true;
-                        break;
-                    case 'ArrowDown':
-                    case 's':
-                    case 'S':
-                        mapState.viewportY += step;
-                        moved = true;
-                        break;
-                    case 'ArrowLeft':
-                    case 'a':
-                    case 'A':
-                        mapState.viewportX -= step;
-                        moved = true;
-                        break;
-                    case 'ArrowRight':
-                    case 'd':
-                    case 'D':
-                        mapState.viewportX += step;
-                        moved = true;
-                        break;
-                }
-                
-                if (moved) {
-                    event.preventDefault();
-                    clampViewport();
-                    updateMapView();
-                    log_status(`Viewport moved to (${Math.round(mapState.viewportX)}, ${Math.round(mapState.viewportY)})`);
-                }
-            });
+            document.addEventListener('keydown', handle_keydown);
 
-            // Make WASM functions globally available
+            // Make WASM functions globally available for onclick handlers
             window.handleBuildButton = handle_build_button;
             window.handleResearchButton = handle_research_button;
             window.handleUnitCommand = handle_unit_command;
