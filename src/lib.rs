@@ -521,6 +521,25 @@ mod tests {
         assert_eq!(distance(1.0, 1.0, 1.0, 1.0), 0.0);
         assert_eq!(distance(-1.0, -1.0, 2.0, 3.0), 5.0);
     }
+
+    #[test]
+    fn test_minimap_to_world() {
+        // Minimap viewBox is 200x150, world is 2400x1800
+        // Scale: 12x for width, 12x for height
+        let (world_x, world_y) = minimap_to_world(100.0, 75.0);
+        assert_eq!(world_x, 1200.0); // 100 * 12
+        assert_eq!(world_y, 900.0);  // 75 * 12
+
+        // Test corner
+        let (world_x, world_y) = minimap_to_world(0.0, 0.0);
+        assert_eq!(world_x, 0.0);
+        assert_eq!(world_y, 0.0);
+
+        // Test opposite corner
+        let (world_x, world_y) = minimap_to_world(200.0, 150.0);
+        assert_eq!(world_x, 2400.0);
+        assert_eq!(world_y, 1800.0);
+    }
 }
 
 #[cfg(test)]
