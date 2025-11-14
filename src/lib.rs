@@ -1,9 +1,94 @@
 use wasm_bindgen::prelude::*;
 use web_sys::console;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[wasm_bindgen]
 extern "C" {
     fn alert(s: &str);
+}
+
+// Map state management
+#[derive(Clone)]
+pub struct MapState {
+    pub map_width: f64,
+    pub map_height: f64,
+    pub viewport_width: f64,
+    pub viewport_height: f64,
+    pub viewport_x: f64,
+    pub viewport_y: f64,
+}
+
+impl MapState {
+    pub fn new() -> Self {
+        MapState {
+            map_width: 2400.0,
+            map_height: 1800.0,
+            viewport_width: 800.0,
+            viewport_height: 600.0,
+            viewport_x: 800.0,  // Start centered
+            viewport_y: 600.0,
+        }
+    }
+
+    pub fn clamp_viewport(&mut self) {
+        self.viewport_x = self.viewport_x.max(0.0).min(self.map_width - self.viewport_width);
+        self.viewport_y = self.viewport_y.max(0.0).min(self.map_height - self.viewport_height);
+    }
+
+    pub fn move_viewport(&mut self, dx: f64, dy: f64) {
+        self.viewport_x += dx;
+        self.viewport_y += dy;
+        self.clamp_viewport();
+    }
+
+    pub fn set_viewport_center(&mut self, world_x: f64, world_y: f64) {
+        self.viewport_x = world_x - (self.viewport_width / 2.0);
+        self.viewport_y = world_y - (self.viewport_height / 2.0);
+        self.clamp_viewport();
+    }
+}
+
+impl Default for MapState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// Global map state
+thread_local! {
+    static MAP_STATE: Rc<RefCell<MapState>> = Rc::new(RefCell::new(MapState::new()));
+}
+
+// Coordinate transformation functions
+pub fn screen_to_world(screen_x: f64, screen_y: f64, svg_width: f64, svg_height: f64) -> (f64, f64) {
+    MAP_STATE.with(|state| {
+        let state = state.borrow();
+
+        // Convert screen coordinates to SVG coordinates
+        let svg_x = (screen_x / svg_width) * 800.0;
+        let svg_y = (screen_y / svg_height) * 600.0;
+
+        // Reverse the isometric transformation
+        let adjusted_x = svg_x - 400.0;
+        let adjusted_y = svg_y - 100.0;
+
+        // Apply inverse matrix transformation
+        let det = 0.866 * 0.5 - 0.5 * (-0.866);
+        let world_x = ((0.5 * adjusted_x) - (-0.866 * adjusted_y)) / det + state.viewport_x;
+        let world_y = ((-0.5 * adjusted_x) + (0.866 * adjusted_y)) / det + state.viewport_y;
+
+        (world_x, world_y)
+    })
+}
+
+pub fn minimap_to_world(minimap_x: f64, minimap_y: f64) -> (f64, f64) {
+    MAP_STATE.with(|state| {
+        let state = state.borrow();
+        let scale_x = state.map_width / 200.0;
+        let scale_y = state.map_height / 150.0;
+        (minimap_x * scale_x, minimap_y * scale_y)
+    })
 }
 
 // Helper function to format status messages
@@ -152,6 +237,75 @@ mod tests {
     fn test_format_coordinates_negative() {
         let result = format_coordinates(-10.5, -20.8);
         assert_eq!(result, "(-10, -21)");
+    }
+
+    #[test]
+    fn test_map_state_new() {
+        let state = MapState::new();
+        assert_eq!(state.map_width, 2400.0);
+        assert_eq!(state.map_height, 1800.0);
+        assert_eq!(state.viewport_width, 800.0);
+        assert_eq!(state.viewport_height, 600.0);
+        assert_eq!(state.viewport_x, 800.0);
+        assert_eq!(state.viewport_y, 600.0);
+    }
+
+    #[test]
+    fn test_map_state_clamp_viewport() {
+        let mut state = MapState::new();
+
+        // Test clamping when viewport goes negative
+        state.viewport_x = -100.0;
+        state.viewport_y = -50.0;
+        state.clamp_viewport();
+        assert_eq!(state.viewport_x, 0.0);
+        assert_eq!(state.viewport_y, 0.0);
+
+        // Test clamping when viewport exceeds bounds
+        state.viewport_x = 3000.0;
+        state.viewport_y = 2000.0;
+        state.clamp_viewport();
+        assert_eq!(state.viewport_x, 2400.0 - 800.0); // map_width - viewport_width
+        assert_eq!(state.viewport_y, 1800.0 - 600.0); // map_height - viewport_height
+    }
+
+    #[test]
+    fn test_map_state_move_viewport() {
+        let mut state = MapState::new();
+        let initial_x = state.viewport_x;
+        let initial_y = state.viewport_y;
+
+        state.move_viewport(50.0, 100.0);
+        assert_eq!(state.viewport_x, initial_x + 50.0);
+        assert_eq!(state.viewport_y, initial_y + 100.0);
+
+        // Test that move_viewport clamps
+        state.move_viewport(-10000.0, -10000.0);
+        assert_eq!(state.viewport_x, 0.0);
+        assert_eq!(state.viewport_y, 0.0);
+    }
+
+    #[test]
+    fn test_map_state_set_viewport_center() {
+        let mut state = MapState::new();
+
+        state.set_viewport_center(1200.0, 900.0);
+        // viewport_x should be 1200 - 400 (half of viewport_width)
+        // viewport_y should be 900 - 300 (half of viewport_height)
+        assert_eq!(state.viewport_x, 800.0);
+        assert_eq!(state.viewport_y, 600.0);
+
+        // Test clamping when centering near edge
+        state.set_viewport_center(100.0, 100.0);
+        assert_eq!(state.viewport_x, 0.0); // Clamped to 0
+        assert_eq!(state.viewport_y, 0.0); // Clamped to 0
+    }
+
+    #[test]
+    fn test_distance() {
+        assert_eq!(distance(0.0, 0.0, 3.0, 4.0), 5.0);
+        assert_eq!(distance(1.0, 1.0, 1.0, 1.0), 0.0);
+        assert_eq!(distance(-1.0, -1.0, 2.0, 3.0), 5.0);
     }
 }
 
